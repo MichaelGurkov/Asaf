@@ -1,0 +1,92 @@
+
+
+
+```{r load_libraries}
+
+library(tidyverse)
+
+library(forecast)
+
+library(tsibble)
+
+
+```
+
+
+```{r Import_data}
+
+spy = read_csv(paste0(file.path(Sys.getenv("USERPROFILE"), fsep = "\\"),
+                      "\\OneDrive - Bank Of Israel\\Data\\Asaf\\SPX.csv"))
+
+spy = spy %>%
+  rename_all(~tolower(.)) %>%
+  mutate(date = mdy(date)) %>%
+  as_tsibble(index = "date") %>%
+  mutate_if(~is.character(.), ~as.numeric(.))
+
+```
+
+
+```{r Preprocessing}
+
+# Calculate time periods
+
+spy = spy %>%
+  mutate(ret_10 = slide_dbl(spx_index,~diff(log(.x[c(1,10)])),.before = 9,
+                              .complete = TRUE)) %>%
+  mutate(ret_15 = slide_dbl(spx_index,~diff(log(.x[c(1,15)])),.before = 14,
+                             .complete = TRUE)) %>%
+  mutate(ret_30 = slide_dbl(spx_index,~diff(log(.x[c(1,30)])),.before = 29,
+                              .complete = TRUE))
+
+
+# Bin returns distribution
+
+spy = spy %>% 
+  mutate(ret_10_cat = cut(ret_10,breaks = c(-Inf,-0.1,-0.05,0,0.05,0.1,Inf),
+                          labels = c("10-","-10_-5","-5_0","0-5","5-10","10+"),
+                          ordered_result = TRUE))
+
+
+```
+
+
+```{r plot_ret_dist}
+
+ggplot(spy, aes(x = date, y = ret_10)) + 
+  geom_line() + 
+  labs(x = "", y = "", title = "Returns (10 day period)") + 
+  scale_y_continuous(labels = scales::percent_format(accuracy = 0.01)) + 
+  geom_hline(yintercept = -0.05, color = "blue", linetype = "dashed") + 
+  geom_point(data = spy %>% 
+               filter(ret_10 < -0.05),
+             aes(x = date, y = ret_10), color = "red") + 
+  theme_bw() + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(spy, aes(x = ret_10)) + 
+  geom_density() + 
+  labs(x = "", y = "", title = "Returns (10 day period)") + 
+  scale_x_continuous(labels = scales::percent_format(accuracy = 0.01)) +
+  theme_bw() + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+ret_cat_dist = table(spy$ret_10_cat) %>% 
+         as.data.frame()
+
+ggplot(ret_cat_dist, aes(x = Var1, y = Freq)) + 
+  geom_col() + 
+  geom_text(aes(x = Var1, y = Freq,
+                label = scales::percent(Freq / sum(Freq),accuracy = 0.1)),
+            color = "magenta", vjust = -1) + 
+  labs(x = "Return bins", y = "", title = "Frequency of return bins") + 
+  scale_y_continuous(labels = scales::comma_format(),
+                     limits = c(0,max(ret_cat_dist$Freq) * 1.05)) +
+  theme_bw() + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+rm(ret_cat_dist)
+
+```
+
+
