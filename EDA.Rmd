@@ -39,7 +39,7 @@ spy = spy %>%
 
 # Calculate time periods
 
-spy = spy %>%
+work_df = spy %>%
   mutate(ret_10 = slide_dbl(spx_index,~diff(log(.x[c(1,10)])),
                             .before = 9,
                               .complete = TRUE)) %>%
@@ -52,13 +52,13 @@ spy = spy %>%
 
 # Convert ret 10 to binary
 
-spy = spy %>% 
-  mutate(ret_10_low = as.numeric(ret_10 < -0.05))
+work_df = work_df %>% 
+  mutate(ret_10_below_5 = as.numeric(ret_10 < -0.05))
 
 
 # Bin returns distribution
 
-spy = spy %>% 
+work_df = work_df %>% 
   mutate(ret_10_cat = cut(
     ret_10,
     breaks = c(-Inf,-0.1,-0.05,0,0.05,0.1,Inf),
@@ -71,27 +71,27 @@ spy = spy %>%
 
 ```{r plot_ret_dist}
 
-ggplot(spy, aes(x = date, y = ret_10)) + 
+ggplot(work_df, aes(x = date, y = ret_10)) + 
   geom_line() + 
   labs(x = "", y = "", title = "Returns (10 day period)") + 
   scale_y_continuous(
     labels = scales::percent_format(accuracy = 0.01)) + 
   geom_hline(yintercept = -0.05, color = "blue",
              linetype = "dashed") + 
-  geom_point(data = spy %>% 
+  geom_point(data = work_df %>% 
                filter(ret_10 < -0.05),
              aes(x = date, y = -0.05), color = "red") + 
   theme_bw() + 
   theme(plot.title = element_text(hjust = 0.5))
 
-ggplot(spy, aes(x = ret_10)) + 
+ggplot(work_df, aes(x = ret_10)) + 
   geom_density() + 
   labs(x = "", y = "", title = "Returns (10 day period)") + 
   scale_x_continuous(labels = scales::percent_format(accuracy = 0.01)) +
   theme_bw() + 
   theme(plot.title = element_text(hjust = 0.5))
 
-ret_cat_dist = table(spy$ret_10_cat) %>% 
+ret_cat_dist = table(work_df$ret_10_cat) %>% 
          as.data.frame()
 
 ggplot(ret_cat_dist, aes(x = Var1, y = Freq)) + 
@@ -112,17 +112,50 @@ rm(ret_cat_dist)
 
 ```{r fit model}
 
-models = list()
-
-reg_df = spy %>% 
-  select(-starts_with("ret"),ret_10_low)
+model_fit_list = list()
 
 log_model = logistic_reg() %>% 
   set_engine("glm") %>% 
   set_mode("classification")
 
-models$log_fit = log_model %>% 
-  fit(as_factor(ret_10_low) ~ ., data = reg_df)
+model_fit_list$log_fit = log_model %>% 
+  fit(as_factor(ret_10_below_5) ~ .,
+      data = work_df %>% 
+        select(-starts_with("ret"),ret_10_below_5))
+
+
+
+```
+
+
+```{r cross_walidation, eval=FALSE}
+
+roll_grid = rolling_origin(data = work_df %>% 
+                             select(-starts_with("ret"),ret_10_below_5),
+                           initial = 365,
+                           assess = 10)
+
+get_score = function(temp_split){
+  
+    test_set = assessment(temp_split)
+    
+    pred_df = predict(model_fit_list$log_fit,
+                    new_data = test_set,type = "class")
+    
+    pred_df = pred_df %>% 
+      cbind(test_set$ret_10_below_5) %>% 
+      set_names(c("trigger", "truth")) %>% 
+      mutate_all(~factor(., levels = c("1","0")))
+    
+    score = accuracy(data = pred_df,truth = truth,trigger)
+    
+    
+    return(score$.estimate)
+  
+}
+
+scores = map_data(roll_grid$splits, get_score)
+
 
 
 
