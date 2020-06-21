@@ -1,4 +1,9 @@
 
+```{r, echo=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+```
 
 
 ```{r load_libraries}
@@ -34,6 +39,15 @@ spy = spy %>%
 
 ```
 
+# Intro
+
+The purpose is to identify the factors that affect (10) day return of SPX.
+
+## Let's take a look at Earnings per Share
+
+
+# Preprocessing
+
 
 ```{r Preprocessing}
 
@@ -66,10 +80,19 @@ work_df = work_df %>%
     ordered_result = TRUE))
 
 
+#EPS
+
+work_df = work_df %>% 
+  mutate(eps_diff = c(NA,diff(t12_eps_aggte)))
+
+
+
 ```
 
+# Plotting
 
-```{r plot_ret_dist}
+
+```{r plot_ret_10_dist}
 
 ggplot(work_df, aes(x = date, y = ret_10)) + 
   geom_line() + 
@@ -91,6 +114,13 @@ ggplot(work_df, aes(x = ret_10)) +
   theme_bw() + 
   theme(plot.title = element_text(hjust = 0.5))
 
+
+
+```
+
+
+```{r plot_categorical_ret_dist}
+
 ret_cat_dist = table(work_df$ret_10_cat) %>% 
          as.data.frame()
 
@@ -106,8 +136,40 @@ ggplot(ret_cat_dist, aes(x = Var1, y = Freq)) +
   theme(plot.title = element_text(hjust = 0.5))
 
 rm(ret_cat_dist)
+```
+
+
+## Returns vs EPS
+
+```{r plot_returns_vs_eps}
+
+ggplot(work_df %>% 
+         filter(eps_diff > 0), aes(x = log(eps_diff), y = ret_10)) + 
+  labs(x = "log change EPS", y = "", title = "10 day return vs changes in EPS") + 
+  scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) + 
+  geom_point() + 
+  geom_smooth(method = "loess") +
+  theme_bw()
 
 ```
+
+
+
+```{r plot_cat_returns_vs_eps}
+
+ggplot(work_df %>% 
+         select(ret_10_cat, t12_eps_aggte) %>% 
+         filter(complete.cases(.)), aes(x = t12_eps_aggte, y = ret_10_cat)) + 
+  labs(x = "EPS", y = "", title = "10 day return (binned) vs EPS") + 
+  geom_point() + 
+  theme_bw()
+
+```
+
+
+Seems there is no relationship between EPS and (10) day return.
+
+# Model fitting
 
 
 ```{r fit model}
