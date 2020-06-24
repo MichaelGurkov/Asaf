@@ -1,4 +1,6 @@
-
+---
+title: Exploratory Data Analysis
+---
 
 
 ```{r load_libraries}
@@ -6,8 +8,6 @@
 library(tidyverse)
 
 library(forecast)
-
-library(tsibble)
 
 library(lubridate)
 
@@ -21,21 +21,98 @@ library(tidymodels)
 ```
 
 
+```{r setup}
+
+theme_set(theme_bw())
+
+plot_eval = FALSE
+
+models_list = list()
+
+```
+
+
 ```{r Import_data}
 
-spy = read_csv(paste0(file.path(Sys.getenv("USERPROFILE"),
+raw_df = read_csv(paste0(file.path(Sys.getenv("USERPROFILE"),
                                 fsep = "\\"),                      "\\OneDrive - Bank Of Israel\\Data\\Asaf\\SPX.csv"))
 
-spy = spy %>%
+spy = raw_df %>%
   rename_all(~tolower(.)) %>%
   mutate(date = mdy(date)) %>%
-  as_tsibble(index = "date") %>%
   mutate_if(~is.character(.), ~as.numeric(.))
 
 ```
 
 
+## Summary stats
+
+```{r plot_features_hist}
+
+spy %>% 
+  select(-date) %>% 
+  pivot_longer(everything()) %>% 
+  ggplot(aes(x = value)) + 
+  geom_histogram() + 
+  facet_wrap(~name, scales = "free")
+
+
+
+```
+
+
+```{r plot_features_timeseries, eval=plot_eval}
+
+spy %>% 
+  pivot_longer(-date) %>% 
+  ggplot(aes(x = date, y = value)) + 
+  geom_line() + 
+  facet_wrap(~name, scales = "free")
+
+```
+
+
 ```{r Preprocessing}
+
+
+# Smoothing outliers
+spy = spy %>% 
+  mutate(across(c("indx_weighted_book_val",
+                  "current_ev_to_book_value"),
+                .fns = ~ slide_dbl(.,
+                                   median,
+                                   .before = 70,
+                                   .after = 70)
+                ))
+
+
+# Difference non stationary features
+
+spy = spy %>% 
+  mutate(across(-date, ~c(NA, diff(log(.)))))
+
+
+# Shift spx one day forward
+
+spy = spy %>% 
+  mutate(spx_index = lead(spx_index))
+
+
+# Transform outcome to categorical
+
+spy = spy %>% 
+  mutate(market_dir = if_else(spx_index > 0, "up", "down")) %>% 
+  mutate(market_dir = as_factor(market_dir))
+
+# Filter complete cases
+
+spy = spy %>% 
+  filter(complete.cases(.))
+
+```
+
+
+```{r Feature_engineering, eval=FALSE}
 
 # Calculate time periods
 
@@ -65,11 +142,22 @@ spy = spy %>%
     labels = c("10-","-10_-5","-5_0","0-5","5-10","10+"),
     ordered_result = TRUE))
 
+```
+
+
+```{r plot_features_timeseries,eval=plot_eval}
+
+spy %>% 
+  pivot_longer(-date) %>% 
+  ggplot(aes(x = date, y = value)) + 
+  geom_line() + 
+  facet_wrap(~name, scales = "free")
 
 ```
 
 
-```{r plot_ret_dist}
+
+```{r plot_ret_dist, eval=FALSE}
 
 ggplot(spy, aes(x = date, y = ret_10)) + 
   geom_line() + 
@@ -110,21 +198,66 @@ rm(ret_cat_dist)
 ```
 
 
-```{r fit model}
+```{r fit models}
 
-models = list()
+models_list$linear_reg = linear_reg() %>% 
+  set_engine("lm")
 
-reg_df = spy %>% 
-  select(-starts_with("ret"),ret_10_low)
-
-log_model = logistic_reg() %>% 
-  set_engine("glm") %>% 
-  set_mode("classification")
-
-models$log_fit = log_model %>% 
-  fit(as_factor(ret_10_low) ~ ., data = reg_df)
+models_list$logit_reg = logistic_reg() %>% 
+  set_engine("glm")
 
 
+
+
+```
+
+
+```{r train_set_predictions}
+
+
+```
+
+
+```{r rolling_cross_validation}
+
+roll_grid = rolling_origin(spy,initial = 360,assess = 1)
+
+roll_pred = map(roll_grid$splits[sample(1:nrow(roll_grid),500)], function(temp_split){
+  
+  train_set = analysis(temp_split)
+  
+  test_set = assessment(temp_split)
+  
+  linear_pred = models_list$linear_reg %>% 
+    fit(spx_index ~ ., data = train_set) %>% 
+    predict(new_data = test_set) %>% 
+    mutate(return = test_set$spx_index) %>% 
+    rename(ret_pred = .pred)
+  
+  logit_pred = models_list$logit_reg %>% 
+    fit(market_dir ~ ., data = train_set) %>% 
+    predict(new_data = test_set) %>% 
+    mutate(market_dir = test_set$market_dir) %>% 
+    rename(market_dir_pred = .pred_class)
+  
+  return(list(data.frame(date = test_set$date),
+              linear_pred, logit_pred) %>% 
+           bind_cols())
+
+  
+})
+
+roll_pred = roll_pred %>% 
+  bind_rows()
+
+
+rmse = roll_pred %>% 
+  select(return, ret_pred) %>% 
+  rmse(truth = return, estimate = ret_pred)
+
+accuracy_score = roll_pred %>% 
+  select(market_dir, market_dir_pred) %>% 
+  accuracy(truth = market_dir, estimate = market_dir_pred)
 
 ```
 
