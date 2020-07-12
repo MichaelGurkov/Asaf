@@ -10,7 +10,6 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 ```
 
 
-
 ```{r load_libraries}
 
 library(tidyverse)
@@ -33,7 +32,7 @@ library(tidymodels)
 
 theme_set(theme_bw())
 
-plot_eval = FALSE
+plot_eval = TRUE
 
 models_list = list()
 
@@ -42,13 +41,27 @@ models_list = list()
 
 ```{r Import_data}
 
-raw_df = read_csv(paste0(file.path(Sys.getenv("USERPROFILE"),
-                                fsep = "\\"),                      "\\OneDrive - Bank Of Israel\\Data\\Asaf\\SPX.csv"))
+raw_data = list()
 
-spy = raw_df %>%
-  rename_all(~tolower(.)) %>%
-  mutate(date = mdy(date)) %>%
-  mutate_if(~is.character(.), ~as.numeric(.))
+raw_data$spx = read_csv(paste0(
+  file.path(Sys.getenv("USERPROFILE"),
+            fsep = "\\"),
+  "\\OneDrive - Bank Of Israel\\Data\\Asaf\\SPX.csv"))
+
+raw_data$others = read_csv(paste0(
+  file.path(Sys.getenv("USERPROFILE"),
+            fsep = "\\"),
+  "\\OneDrive - Bank Of Israel\\Data\\Asaf\\SPX - OThERS.csv"))
+
+spy = list(spy = raw_data$spx %>%
+             rename_all(~tolower(.)) %>%
+             mutate(date = mdy(date)) %>%
+             mutate_if(~is.character(.), ~as.numeric(.)),
+           others = raw_data$others %>%
+             rename_all(~tolower(.)) %>%
+             mutate(date = mdy(date)) %>%
+             mutate_if(~is.character(.), ~as.numeric(.))) %>% 
+  reduce(full_join, by = "date")
 
 ```
 
@@ -69,8 +82,9 @@ spy %>%
 
 ```
 
+Many features have outliers (indx_weighted_book_val, dvd_payout_ratio are extreme cases)
 
-```{r plot_features_timeseries, eval=plot_eval}
+```{r plot_features_timeseries_before, eval=plot_eval}
 
 spy %>% 
   pivot_longer(-date) %>% 
@@ -80,6 +94,7 @@ spy %>%
 
 ```
 
+Most of the timeseries seem to be non stationary
 
 ```{r Preprocessing}
 
@@ -104,28 +119,33 @@ spy = spy %>%
 # Shift spx one day forward
 
 spy = spy %>% 
-  mutate(spx_index = lead(spx_index))
+  mutate(spx_index_lead_1_day = lead(spx_index))
 
 
-# Transform outcome to categorical
-
-spy = spy %>% 
-  mutate(market_dir = if_else(spx_index > 0, "up", "down")) %>% 
-  mutate(market_dir = as_factor(market_dir))
-
-# Filter complete cases
-
-spy = spy %>% 
-  filter(complete.cases(.))
 
 ```
 
 
-```{r Feature_engineering, eval=FALSE}
+```{r plot_features_timeseries_after,eval=plot_eval}
+
+spy %>% 
+  pivot_longer(-date) %>% 
+  ggplot(aes(x = date, y = value)) + 
+  geom_line() + 
+  facet_wrap(~name, scales = "free")
+
+
+```
+
+
+After log transform and differencing still peaking outliers
+
+
+```{r Feature_engineering}
 
 # Calculate time periods
 
-work_df = spy %>%
+spy = spy %>%
   mutate(ret_10 = slide_dbl(spx_index,~diff(log(.x[c(1,10)])),
                             .before = 9,
                               .complete = TRUE)) %>%
@@ -136,36 +156,38 @@ work_df = spy %>%
                             .before = 29,
                               .complete = TRUE))
 
-# Convert ret 10 to binary
+# Asaf's one feature reg list
 
-work_df = work_df %>% 
-  mutate(ret_10_below_5 = as.numeric(ret_10 < -0.05))
-
-
-# Bin returns distribution
-
-work_df = work_df %>% 
-  mutate(ret_10_cat = cut(
-    ret_10,
-    breaks = c(-Inf,-0.1,-0.05,0,0.05,0.1,Inf),
-    labels = c("10-","-10_-5","-5_0","0-5","5-10","10+"),
-    ordered_result = TRUE))
+ spy = spy %>% 
+   mutate(eps_10 = slide_dbl(t12_eps_aggte,~diff(log(.x[c(1,10)])),
+                            .before = 9,
+                              .complete = TRUE)) %>% 
+   mutate(delta_10_year = c(NA,diff(us_gov_yield_10_y))) %>% 
+   mutate(delta_3_month = c(NA,diff(us_gov_yield_3_m))) %>% 
+   mutate(delta_fed_funds_rate = c(NA,diff(fed_funds_rate))) %>% 
+   mutate(delta_HY_spread = c(NA,diff(high_yield_spread))) %>%
+   mutate(delta_IG_spread = c(NA,diff(inv_grade_spread)))
 
 ```
 
 
-```{r plot_features_timeseries,eval=plot_eval}
+
+### Conditional distribution
+
+First we look at return distribution over some period (say 10 day return). In the second step we look at the distribution conditional on one feature (say look at when EPS was positive vs negative)
+
+```{r return_dist}
 
 spy %>% 
-  pivot_longer(-date) %>% 
-  ggplot(aes(x = date, y = value)) + 
-  geom_line() + 
-  facet_wrap(~name, scales = "free")
-
-#EPS
-
-work_df = work_df %>% 
-  mutate(eps_diff = c(NA,diff(t12_eps_aggte)))
+  select(ret_10) %>% 
+  ggplot(aes(x = ret_10)) + 
+  geom_histogram(alpha = 0.5, color = "black") + 
+  stat_bin(aes(y = ..count.., label = ..count..),
+           geom = "text", vjust = -0.5, color = "magenta",
+           size = 3) + 
+  scale_x_continuous(
+    labels = scales::percent_format(accuracy = 0.1),n.breaks = 10) +
+  labs(x = "", title = "Continous return distribution")
 
 
 
@@ -173,7 +195,61 @@ work_df = work_df %>%
 
 
 
-```{r fit models}
+```{r return_dist_by_eps}
+
+spy %>% 
+  select(ret_10, t12_eps_aggte) %>% 
+  mutate(eps_dir = c(NA,diff(t12_eps_aggte)) > 0) %>% 
+  ggplot(aes(x = ret_10, fill = eps_dir,color = eps_dir)) + 
+  geom_density(alpha = 0.3, position = "dodge") + 
+  # stat_bin(aes(y = ..count.., label = ..count..),
+  #          geom = "text", vjust = -0.5, color = "magenta",
+  #          size = 3) + 
+  scale_x_continuous(
+    labels = scales::percent_format(accuracy = 0.1),n.breaks = 10) +
+  labs(x = "",
+       title = "Continous return distribution by EPS") + 
+  theme(legend.position = "bottom")
+
+
+
+```
+
+
+
+
+
+
+
+
+```{r plot_one_feature_reg}
+
+feature_list = c("eps_10","delta_10_year",
+                 "delta_fed_funds_rate","delta_IG_spread")
+
+
+plot_list = map(feature_list, function(temp_feature){
+  
+  
+  temp_plot = spy %>% 
+    select(ret_10, temp_feature) %>% 
+    ggplot(aes(x = !!sym(temp_feature), y = ret_10)) + 
+    geom_point() + 
+    geom_smooth(method = "lm")
+  
+  
+  
+  
+})
+
+
+```
+
+
+
+## Model fit
+
+```{r fit models, eval=FALSE}
 
 models_list$linear_reg = linear_reg() %>% 
   set_engine("lm")
@@ -184,13 +260,14 @@ models_list$logit_reg = logistic_reg() %>%
 
 ```
 
-```{r train_set_predictions}
+
+```{r train_set_predictions, eval=FALSE}
 
 
 ```
 
 
-```{r rolling_cross_validation}
+```{r rolling_cross_validation, eval=FALSE}
 
 roll_grid = rolling_origin(spy,initial = 360,assess = 1)
 
