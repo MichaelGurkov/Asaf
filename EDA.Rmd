@@ -34,7 +34,18 @@ theme_set(theme_bw())
 
 plot_eval = TRUE
 
+params_list = list()
+
+params_list$asaf_one_feature_set = c(
+  "eps_10",
+  "delta_10_year",
+  "delta_fed_funds_rate",
+  "delta_IG_spread"
+  )
+
+
 models_list = list()
+
 
 ```
 
@@ -61,7 +72,8 @@ spy = list(spy = raw_data$spx %>%
              rename_all(~tolower(.)) %>%
              mutate(date = mdy(date)) %>%
              mutate_if(~is.character(.), ~as.numeric(.))) %>% 
-  reduce(full_join, by = "date")
+  reduce(full_join, by = "date") %>% 
+  arrange(date)
 
 ```
 
@@ -112,8 +124,8 @@ spy = spy %>%
 
 # Difference non stationary features
 
-spy = spy %>% 
-  mutate(across(-date, ~c(NA, diff(log(.)))))
+# spy = spy %>% 
+#   mutate(across(-date, ~c(NA, diff(log(.)))))
 
 
 # Shift spx one day forward
@@ -171,10 +183,10 @@ spy = spy %>%
 ```
 
 
-
 ### Conditional distribution
 
 First we look at return distribution over some period (say 10 day return). In the second step we look at the distribution conditional on one feature (say look at when EPS was positive vs negative)
+
 
 ```{r return_dist}
 
@@ -195,11 +207,68 @@ spy %>%
 
 
 
+```{r panel_plot_of_all_vars}
+spy %>% 
+  select(ret_10, params_list$asaf_one_feature_set) %>% 
+  pivot_longer(cols = -ret_10) %>% 
+  ggplot(aes(x = value, y = ret_10)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  facet_wrap(~name,scales = "free")
+
+
+
+
+```
+
+### 10 year bond
+
+```{r plot_gov_10_year}
+
+spy %>% 
+  ggplot(aes(x = date,y = us_gov_yield_10_y)) + 
+  geom_line() + 
+  scale_y_continuous(labels = scales::percent_format(scale = 1)) + 
+  labs(x = "", y = "", title = "Gov 10 year bond yield")
+  
+
+```
+
+
+```{r plot_delta_10_year}
+
+spy %>% 
+  select(date,delta_10_year) %>% 
+  ggplot(aes(x = date,y = delta_10_year)) + 
+  geom_line() + 
+  scale_y_continuous(labels = scales::number_format(scale = 100)) + 
+  labs(x = "", y = "Change (bp)",
+       title = "Change in 10 year bond yield \n (basis points)")
+  
+
+```
+
+
+```{r scatter_delta_va_ret_10}
+
+spy %>% 
+  select(delta_10_year, ret_10) %>% 
+  ggplot(aes(x = delta_10_year, y = ret_10)) + 
+  geom_point() + 
+  geom_smooth(method = "lm")
+
+```
+
+No strong relationship between the market and 10 year bond
+
+### EPS
+
 ```{r return_dist_by_eps}
 
 spy %>% 
   select(ret_10, t12_eps_aggte) %>% 
   mutate(eps_dir = c(NA,diff(t12_eps_aggte)) > 0) %>% 
+  filter(complete.cases(.)) %>% 
   ggplot(aes(x = ret_10, fill = eps_dir,color = eps_dir)) + 
   geom_density(alpha = 0.3, position = "dodge") + 
   # stat_bin(aes(y = ..count.., label = ..count..),
@@ -218,11 +287,53 @@ spy %>%
 
 
 
+### Investment grade spread
+
+
+
+```{r plot_ig_spread}
+
+spy %>% 
+  ggplot(aes(x = date, y = inv_grade_spread)) + 
+  geom_line() + 
+  labs(x = "", y = "", title = "IG spread")
+
+
+```
+
+
+```{r plot_conditional_dist}
+
+spy %>% 
+  select(ret_10, inv_grade_spread) %>% 
+  filter(complete.cases(.)) %>% 
+  mutate(spread_above_average = inv_grade_spread >
+           mean(inv_grade_spread)) %>% 
+  ggplot(aes(x = ret_10, fill = spread_above_average)) + 
+  geom_density(alpha = 0.3) + 
+  labs(y = "",
+       title = "Distribution of returns conditional on high spread")
+  theme(legend.position = "bottom")
+  
+
+```
+
+
+```{r plot_delta_spread}
+
+spy %>% 
+  ggplot(aes(x = delta_IG_spread, y = ret_10)) + 
+  geom_point() + 
+  geom_smooth(method = "lm")
+ 
+
+```
 
 
 
 
-```{r plot_one_feature_reg}
+
+```{r plot_one_feature_reg, eval=FALSE}
 
 feature_list = c("eps_10","delta_10_year",
                  "delta_fed_funds_rate","delta_IG_spread")
@@ -232,7 +343,7 @@ plot_list = map(feature_list, function(temp_feature){
   
   
   temp_plot = spy %>% 
-    select(ret_10, temp_feature) %>% 
+    select(ret_10, any_of(temp_feature)) %>% 
     ggplot(aes(x = !!sym(temp_feature), y = ret_10)) + 
     geom_point() + 
     geom_smooth(method = "lm")
@@ -247,66 +358,25 @@ plot_list = map(feature_list, function(temp_feature){
 
 
 
-## Model fit
+```{r}
 
-```{r fit models, eval=FALSE}
-
-models_list$linear_reg = linear_reg() %>% 
-  set_engine("lm")
-
-models_list$logit_reg = logistic_reg() %>% 
-  set_engine("glm")
+spy %>% 
+  select(date, inv_grade_spread, ret_10) %>% 
+  ggplot(aes(x = c(NA, diff(inv_grade_spread)), y = ret_10)) + 
+  geom_point() + 
+  geom_smooth(method = "lm")
+  
+ 
 
 
 ```
 
 
-```{r train_set_predictions, eval=FALSE}
 
 
-```
 
 
-```{r rolling_cross_validation, eval=FALSE}
-
-roll_grid = rolling_origin(spy,initial = 360,assess = 1)
-
-roll_pred = map(roll_grid$splits[sample(1:nrow(roll_grid),10)], function(temp_split){
-  
-  train_set = analysis(temp_split)
-  
-  test_set = assessment(temp_split)
-  
-  linear_pred = models_list$linear_reg %>% 
-    fit(spx_index ~ ., data = train_set) %>% 
-    predict(new_data = test_set) %>% 
-    mutate(return = test_set$spx_index) %>% 
-    rename(ret_pred = .pred)
-  
-  logit_pred = models_list$logit_reg %>% 
-    fit(market_dir ~ ., data = train_set) %>% 
-    predict(new_data = test_set) %>% 
-    mutate(market_dir = test_set$market_dir) %>% 
-    rename(market_dir_pred = .pred_class)
-  
-  return(list(data.frame(date = test_set$date),
-              linear_pred, logit_pred) %>% 
-           bind_cols())
-
-  
-})
-
-roll_pred = roll_pred %>% 
-  bind_rows()
 
 
-rmse = roll_pred %>% 
-  select(return, ret_pred) %>% 
-  rmse(truth = return, estimate = ret_pred)
 
-accuracy_score = roll_pred %>% 
-  select(market_dir, market_dir_pred) %>% 
-  accuracy(truth = market_dir, estimate = market_dir_pred)
-
-```
 
