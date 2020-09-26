@@ -286,7 +286,6 @@ spy %>%
 
 
 
-
 ### Investment grade spread
 
 
@@ -328,9 +327,6 @@ spy %>%
  
 
 ```
-
-
-
 
 
 ```{r plot_one_feature_reg, eval=FALSE}

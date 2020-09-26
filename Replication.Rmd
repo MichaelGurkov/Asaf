@@ -1,0 +1,136 @@
+---
+title: Exploratory Data Analysis
+---
+
+
+```{r, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+```
+
+
+```{r setup}
+
+library(tidyverse)
+
+library(lubridate)
+
+theme_set(theme_bw() +
+            theme(legend.position = "bottom",
+                  legend.title = element_blank()))
+
+```
+
+
+```{r import_and_process_data}
+
+raw_data = list()
+
+raw_data$spx = read_csv(paste0(
+  file.path(Sys.getenv("USERPROFILE"),
+            fsep = "\\"),
+  "\\OneDrive - Bank Of Israel\\Data\\Asaf\\SPX.csv"))
+
+raw_data$others = read_csv(paste0(
+  file.path(Sys.getenv("USERPROFILE"),
+            fsep = "\\"),
+  "\\OneDrive - Bank Of Israel\\Data\\Asaf\\SPX - OThERS.csv"))
+
+df = list(spy = raw_data$spx %>%
+            rename_all(~tolower(.)) %>%
+            mutate(date = mdy(date)) %>%
+            mutate(across(-date, as.numeric)),
+          others = raw_data$others %>%
+            rename_all(~tolower(.)) %>% 
+             mutate(date = mdy(date)) %>%
+             mutate(across(-date, as.numeric))) %>% 
+  reduce(full_join, by = "date") %>% 
+  arrange(date)
+
+
+df = df %>% 
+  mutate(sp_spread = (t12_eps_aggte / spx_index) * 100 - us_gov_yield_10_y) %>% 
+  mutate(sp_ret = spx_index / lag(spx_index) - 1)
+
+```
+
+# Replication
+
+```{r plot_pe}
+
+df %>% 
+  filter(date >= as.Date("2000-01-01")) %>% 
+  ggplot(aes(x = date, y = indx_general_pe_ratio)) + 
+  geom_line() + 
+  xlab(NULL) + ylab(NULL) + ggtitle("PE multiple - S&P 500")
+
+```
+
+
+```{r plot_sp_spread}
+
+df %>% 
+  ggplot(aes(x = date, y = sp_spread)) + 
+  geom_line() + 
+  xlab(NULL) + ylab(NULL) + ggtitle("SP spread")
+
+```
+
+
+```{r plot_sp_spread_vs_other_spreads}
+
+df %>% 
+  select(date, sp_spread, inv_grade_spread, high_yield_spread) %>% 
+  filter(date >= as.Date("2000-01-01")) %>% 
+  pivot_longer(-date) %>% 
+  ggplot(aes(x = date, y = value, color = name)) + 
+  geom_line() + 
+  xlab(NULL) + ylab(NULL) + ggtitle("Spreads comparison")
+
+```
+
+
+
+# Prediction
+
+```{r plot_sp_spread_comparison}
+
+df %>% 
+  select(date, spx_index, sp_spread) %>% 
+  pivot_longer(-date) %>% 
+  filter(date >= as.Date("2000-01-01")) %>% 
+  filter(complete.cases(.)) %>% 
+  group_by(name) %>% 
+  mutate(value = value / abs(max(value))) %>% 
+  ggplot(aes(x = date, y = value, color = name)) + 
+  geom_line() + 
+  xlab(NULL) + ylab(NULL) + 
+  ggtitle(paste0("Comparison between S&P index and spread",
+                 "\n (normalized by max value to get (-1,1) range)"))
+
+```
+
+
+There seem to be no visible relationship between the index and the spread
+
+
+```{r plot_sp_}
+
+df %>% 
+  filter(date >= as.Date("2000-01-01")) %>% 
+  ggplot(aes(x = date, y = sp_spread)) +
+  geom_line() + 
+  # geom_smooth(method = "loess") + 
+  geom_vline(data = df %>% 
+               select(date, sp_ret) %>% 
+               filter(!is.na(sp_ret)) %>% 
+               filter(cumprod(1 + sp_ret) < 0),
+             aes(xintercept = date),
+             color = "red", size = 3) + 
+  xlab(NULL) + ylab(NULL) + 
+  ggtitle("")
+
+```
+
+
