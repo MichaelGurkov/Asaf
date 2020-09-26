@@ -12,6 +12,8 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 
 ```{r setup}
 
+devtools::load_all()
+
 library(tidyverse)
 
 library(lubridate)
@@ -23,35 +25,9 @@ theme_set(theme_bw() +
 ```
 
 
-```{r import_and_process_data}
+```{r import_data}
 
-raw_data = list()
-
-raw_data$spx = read_csv(paste0(
-  file.path(Sys.getenv("USERPROFILE"),
-            fsep = "\\"),
-  "\\OneDrive - Bank Of Israel\\Data\\Asaf\\SPX.csv"))
-
-raw_data$others = read_csv(paste0(
-  file.path(Sys.getenv("USERPROFILE"),
-            fsep = "\\"),
-  "\\OneDrive - Bank Of Israel\\Data\\Asaf\\SPX - OThERS.csv"))
-
-df = list(spy = raw_data$spx %>%
-            rename_all(~tolower(.)) %>%
-            mutate(date = mdy(date)) %>%
-            mutate(across(-date, as.numeric)),
-          others = raw_data$others %>%
-            rename_all(~tolower(.)) %>% 
-             mutate(date = mdy(date)) %>%
-             mutate(across(-date, as.numeric))) %>% 
-  reduce(full_join, by = "date") %>% 
-  arrange(date)
-
-
-df = df %>% 
-  mutate(sp_spread = (t12_eps_aggte / spx_index) * 100 - us_gov_yield_10_y) %>% 
-  mutate(sp_ret = spx_index / lag(spx_index) - 1)
+data("sp_data")
 
 ```
 
@@ -89,6 +65,8 @@ df %>%
   xlab(NULL) + ylab(NULL) + ggtitle("Spreads comparison")
 
 ```
+
+
 
 
 
