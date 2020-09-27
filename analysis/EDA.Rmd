@@ -12,6 +12,8 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 
 ```{r load_libraries}
 
+devtools::load_all()
+
 library(tidyverse)
 
 library(forecast)
@@ -22,7 +24,6 @@ library(forcats)
 
 library(slider)
 
-library(tidymodels)
 
 
 ```
@@ -30,349 +31,108 @@ library(tidymodels)
 
 ```{r setup}
 
-theme_set(theme_bw())
-
-plot_eval = TRUE
-
-params_list = list()
-
-params_list$asaf_one_feature_set = c(
-  "eps_10",
-  "delta_10_year",
-  "delta_fed_funds_rate",
-  "delta_IG_spread"
-  )
-
-
-models_list = list()
-
+theme_set(theme_bw() +
+            theme(legend.position = "bottom",
+                  legend.title = element_blank()))
 
 ```
 
 
-```{r Import_data}
+```{r import_data}
 
-raw_data = list()
-
-raw_data$spx = read_csv(paste0(
-  file.path(Sys.getenv("USERPROFILE"),
-            fsep = "\\"),
-  "\\OneDrive - Bank Of Israel\\Data\\Asaf\\SPX.csv"))
-
-raw_data$others = read_csv(paste0(
-  file.path(Sys.getenv("USERPROFILE"),
-            fsep = "\\"),
-  "\\OneDrive - Bank Of Israel\\Data\\Asaf\\SPX - OThERS.csv"))
-
-spy = list(spy = raw_data$spx %>%
-             rename_all(~tolower(.)) %>%
-             mutate(date = mdy(date)) %>%
-             mutate_if(~is.character(.), ~as.numeric(.)),
-           others = raw_data$others %>%
-             rename_all(~tolower(.)) %>%
-             mutate(date = mdy(date)) %>%
-             mutate_if(~is.character(.), ~as.numeric(.))) %>% 
-  reduce(full_join, by = "date") %>% 
-  arrange(date)
+data("sp_data")
 
 ```
 
 
+```{r feature_engineering}
 
-## Summary stats
-
-```{r plot_features_hist}
-
-spy %>% 
-  select(-date) %>% 
-  pivot_longer(everything()) %>% 
-  ggplot(aes(x = value)) + 
-  geom_histogram() + 
-  facet_wrap(~name, scales = "free")
-
-
+sp_data = sp_data %>% 
+  mutate(sp_spread = (t12_eps_aggte / spx_index) * 100 - us_gov_yield_10_y) %>% 
+  mutate(sp_ret = c(NA, diff(log(spx_index)))) %>% 
+  mutate(sp_drawdown = calculate_drawdown(spx_index))
 
 ```
 
-Many features have outliers (indx_weighted_book_val, dvd_payout_ratio are extreme cases)
 
-```{r plot_features_timeseries_before, eval=plot_eval}
+# S&P 500
 
-spy %>% 
-  pivot_longer(-date) %>% 
-  ggplot(aes(x = date, y = value)) + 
+```{r plot_sp}
+
+sp_data %>% 
+ggplot(aes(x = date, y = spx_index)) +
+  geom_line() +
+  xlab(NULL) + ylab(NULL) + ggtitle("S&P 500 index")
+
+```
+
+The S&P index was trending upwards since the 90's, took a hit in 2000,
+rebounded and  took another hit in 2008. Since the GFC the index is going up.
+
+Let's look at the drawdown of the index
+
+```{r plot_drawdown}
+
+sp_data %>% 
+  ggplot(aes(x = date, y = sp_drawdown)) + 
   geom_line() + 
-  facet_wrap(~name, scales = "free")
-
-```
-
-Most of the timeseries seem to be non stationary
-
-```{r Preprocessing}
-
-
-# Smoothing outliers
-spy = spy %>% 
-  mutate(across(c("indx_weighted_book_val",
-                  "current_ev_to_book_value"),
-                .fns = ~ slide_dbl(.,
-                                   median,
-                                   .before = 70,
-                                   .after = 70)
-                ))
-
-
-# Difference non stationary features
-
-# spy = spy %>% 
-#   mutate(across(-date, ~c(NA, diff(log(.)))))
-
-
-# Shift spx one day forward
-
-spy = spy %>% 
-  mutate(spx_index_lead_1_day = lead(spx_index))
-
-
+  geom_hline(yintercept = 0, linetype = "dashed", color = "blue") + 
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  xlab(NULL) + ylab(NULL) + ggtitle("S&P 500 drawdown")
 
 ```
 
 
-```{r plot_features_timeseries_after,eval=plot_eval}
+```{r plot_drawdown_vs_spread}
 
-spy %>% 
-  pivot_longer(-date) %>% 
-  ggplot(aes(x = date, y = value)) + 
-  geom_line() + 
-  facet_wrap(~name, scales = "free")
-
-
-```
-
-
-After log transform and differencing still peaking outliers
-
-
-```{r Feature_engineering}
-
-# Calculate time periods
-
-spy = spy %>%
-  mutate(ret_10 = slide_dbl(spx_index,~diff(log(.x[c(1,10)])),
-                            .before = 9,
-                              .complete = TRUE)) %>%
-  mutate(ret_15 = slide_dbl(spx_index,~diff(log(.x[c(1,15)])),
-                            .before = 14,
-                             .complete = TRUE)) %>%
-  mutate(ret_30 = slide_dbl(spx_index,~diff(log(.x[c(1,30)])),
-                            .before = 29,
-                              .complete = TRUE))
-
-# Asaf's one feature reg list
-
- spy = spy %>% 
-   mutate(eps_10 = slide_dbl(t12_eps_aggte,~diff(log(.x[c(1,10)])),
-                            .before = 9,
-                              .complete = TRUE)) %>% 
-   mutate(delta_10_year = c(NA,diff(us_gov_yield_10_y))) %>% 
-   mutate(delta_3_month = c(NA,diff(us_gov_yield_3_m))) %>% 
-   mutate(delta_fed_funds_rate = c(NA,diff(fed_funds_rate))) %>% 
-   mutate(delta_HY_spread = c(NA,diff(high_yield_spread))) %>%
-   mutate(delta_IG_spread = c(NA,diff(inv_grade_spread)))
-
-```
-
-
-### Conditional distribution
-
-First we look at return distribution over some period (say 10 day return). In the second step we look at the distribution conditional on one feature (say look at when EPS was positive vs negative)
-
-
-```{r return_dist}
-
-spy %>% 
-  select(ret_10) %>% 
-  ggplot(aes(x = ret_10)) + 
-  geom_histogram(alpha = 0.5, color = "black") + 
-  stat_bin(aes(y = ..count.., label = ..count..),
-           geom = "text", vjust = -0.5, color = "magenta",
-           size = 3) + 
-  scale_x_continuous(
-    labels = scales::percent_format(accuracy = 0.1),n.breaks = 10) +
-  labs(x = "", title = "Continous return distribution")
-
-
-
-```
-
-
-
-```{r panel_plot_of_all_vars}
-spy %>% 
-  select(ret_10, params_list$asaf_one_feature_set) %>% 
-  pivot_longer(cols = -ret_10) %>% 
-  ggplot(aes(x = value, y = ret_10)) + 
-  geom_point() + 
-  geom_smooth(method = "lm") + 
-  facet_wrap(~name,scales = "free")
-
-
-
-
-```
-
-### 10 year bond
-
-```{r plot_gov_10_year}
-
-spy %>% 
-  ggplot(aes(x = date,y = us_gov_yield_10_y)) + 
-  geom_line() + 
-  scale_y_continuous(labels = scales::percent_format(scale = 1)) + 
-  labs(x = "", y = "", title = "Gov 10 year bond yield")
-  
-
-```
-
-
-```{r plot_delta_10_year}
-
-spy %>% 
-  select(date,delta_10_year) %>% 
-  ggplot(aes(x = date,y = delta_10_year)) + 
-  geom_line() + 
-  scale_y_continuous(labels = scales::number_format(scale = 100)) + 
-  labs(x = "", y = "Change (bp)",
-       title = "Change in 10 year bond yield \n (basis points)")
-  
-
-```
-
-
-```{r scatter_delta_va_ret_10}
-
-spy %>% 
-  select(delta_10_year, ret_10) %>% 
-  ggplot(aes(x = delta_10_year, y = ret_10)) + 
-  geom_point() + 
-  geom_smooth(method = "lm")
-
-```
-
-No strong relationship between the market and 10 year bond
-
-### EPS
-
-```{r return_dist_by_eps}
-
-spy %>% 
-  select(ret_10, t12_eps_aggte) %>% 
-  mutate(eps_dir = c(NA,diff(t12_eps_aggte)) > 0) %>% 
+event_df = sp_data %>% 
+  select(date, sp_drawdown) %>% 
   filter(complete.cases(.)) %>% 
-  ggplot(aes(x = ret_10, fill = eps_dir,color = eps_dir)) + 
-  geom_density(alpha = 0.3, position = "dodge") + 
-  # stat_bin(aes(y = ..count.., label = ..count..),
-  #          geom = "text", vjust = -0.5, color = "magenta",
-  #          size = 3) + 
-  scale_x_continuous(
-    labels = scales::percent_format(accuracy = 0.1),n.breaks = 10) +
-  labs(x = "",
-       title = "Continous return distribution by EPS") + 
-  theme(legend.position = "bottom")
+  mutate(indicator = as.numeric(sp_drawdown < -0.1)) %>% 
+  mutate(diff = c(NA,diff(indicator))) %>% 
+  filter(diff %in% c(1,-1)) %>% 
+  mutate(diff = if_else(diff == 1,"start_date","end_date")) %>% 
+  select(-indicator, -sp_drawdown) %>% 
+  slice(-nrow(.)) %>% 
+  pivot_wider(names_from = "diff", values_from = "date",values_fn = list) %>% 
+  unnest(cols = c("start_date", "end_date")) %>% 
+  mutate(across(everything(), ymd))
 
-
-
-```
-
-
-
-### Investment grade spread
-
-
-
-```{r plot_ig_spread}
-
-spy %>% 
-  ggplot(aes(x = date, y = inv_grade_spread)) + 
+sp_data %>% 
+  ggplot(aes(x = date, y = sp_spread)) + 
   geom_line() + 
-  labs(x = "", y = "", title = "IG spread")
-
-
-```
-
-
-```{r plot_conditional_dist}
-
-spy %>% 
-  select(ret_10, inv_grade_spread) %>% 
-  filter(complete.cases(.)) %>% 
-  mutate(spread_above_average = inv_grade_spread >
-           mean(inv_grade_spread)) %>% 
-  ggplot(aes(x = ret_10, fill = spread_above_average)) + 
-  geom_density(alpha = 0.3) + 
-  labs(y = "",
-       title = "Distribution of returns conditional on high spread")
-  theme(legend.position = "bottom")
+  geom_rect(data = event_df,
+            mapping = aes(xmin = start_date, xmax = end_date,
+                          ymin = -Inf, ymax = Inf),
+            inherit.aes = FALSE, fill = "red", alpha = 0.2) + 
+  xlab(NULL) + ylab(NULL) + ggtitle("S&P spread") + 
+  labs(tag = "Shaded areas are periods where S&P drawdown in -10%") + 
+  theme(plot.tag.position = c(0.2,0.1)) + 
   
 
-```
-
-
-```{r plot_delta_spread}
-
-spy %>% 
-  ggplot(aes(x = delta_IG_spread, y = ret_10)) + 
-  geom_point() + 
-  geom_smooth(method = "lm")
- 
-
-```
-
-
-```{r plot_one_feature_reg, eval=FALSE}
-
-feature_list = c("eps_10","delta_10_year",
-                 "delta_fed_funds_rate","delta_IG_spread")
-
-
-plot_list = map(feature_list, function(temp_feature){
-  
-  
-  temp_plot = spy %>% 
-    select(ret_10, any_of(temp_feature)) %>% 
-    ggplot(aes(x = !!sym(temp_feature), y = ret_10)) + 
-    geom_point() + 
-    geom_smooth(method = "lm")
-  
-  
-  
-  
-})
 
 
 ```
 
 
 
-```{r}
+```{r plot_drawdown_vs_spread_monthly}
 
-spy %>% 
-  select(date, inv_grade_spread, ret_10) %>% 
-  ggplot(aes(x = c(NA, diff(inv_grade_spread)), y = ret_10)) + 
-  geom_point() + 
-  geom_smooth(method = "lm")
+
+sp_data %>% 
+  group_by(date = as.yearmon(date)) %>% 
+  summarise(sp_spread = mean(sp_spread, na.rm = TRUE)) %>% 
+  ggplot(aes(x = date, y = sp_spread)) + 
+  geom_line() + 
+  geom_rect(data = event_df %>% 
+              mutate(across(everything(), as.yearmon)),
+            mapping = aes(xmin = start_date, xmax = end_date,
+                          ymin = -Inf, ymax = Inf),
+            inherit.aes = FALSE, fill = "red", alpha = 0.2) + 
+  xlab(NULL) + ylab(NULL) + ggtitle("S&P spread at monthly frequency")
   
- 
+
 
 
 ```
-
-
-
-
-
-
-
-
-
 

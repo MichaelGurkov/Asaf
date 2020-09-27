@@ -31,11 +31,19 @@ data("sp_data")
 
 ```
 
+```{r feature_engineering}
+
+sp_data = sp_data %>% 
+  mutate(sp_spread = (t12_eps_aggte / spx_index) * 100 - us_gov_yield_10_y)
+
+```
+
+
 # Replication
 
 ```{r plot_pe}
 
-df %>% 
+sp_data %>% 
   filter(date >= as.Date("2000-01-01")) %>% 
   ggplot(aes(x = date, y = indx_general_pe_ratio)) + 
   geom_line() + 
@@ -46,7 +54,7 @@ df %>%
 
 ```{r plot_sp_spread}
 
-df %>% 
+sp_data %>% 
   ggplot(aes(x = date, y = sp_spread)) + 
   geom_line() + 
   xlab(NULL) + ylab(NULL) + ggtitle("SP spread")
@@ -56,7 +64,7 @@ df %>%
 
 ```{r plot_sp_spread_vs_other_spreads}
 
-df %>% 
+sp_data %>% 
   select(date, sp_spread, inv_grade_spread, high_yield_spread) %>% 
   filter(date >= as.Date("2000-01-01")) %>% 
   pivot_longer(-date) %>% 
@@ -68,47 +76,5 @@ df %>%
 
 
 
-
-
-# Prediction
-
-```{r plot_sp_spread_comparison}
-
-df %>% 
-  select(date, spx_index, sp_spread) %>% 
-  pivot_longer(-date) %>% 
-  filter(date >= as.Date("2000-01-01")) %>% 
-  filter(complete.cases(.)) %>% 
-  group_by(name) %>% 
-  mutate(value = value / abs(max(value))) %>% 
-  ggplot(aes(x = date, y = value, color = name)) + 
-  geom_line() + 
-  xlab(NULL) + ylab(NULL) + 
-  ggtitle(paste0("Comparison between S&P index and spread",
-                 "\n (normalized by max value to get (-1,1) range)"))
-
-```
-
-
-There seem to be no visible relationship between the index and the spread
-
-
-```{r plot_sp_}
-
-df %>% 
-  filter(date >= as.Date("2000-01-01")) %>% 
-  ggplot(aes(x = date, y = sp_spread)) +
-  geom_line() + 
-  # geom_smooth(method = "loess") + 
-  geom_vline(data = df %>% 
-               select(date, sp_ret) %>% 
-               filter(!is.na(sp_ret)) %>% 
-               filter(cumprod(1 + sp_ret) < 0),
-             aes(xintercept = date),
-             color = "red", size = 3) + 
-  xlab(NULL) + ylab(NULL) + 
-  ggtitle("")
-
-```
 
 

@@ -1,0 +1,70 @@
+----
+title: "Estimation"
+----
+
+```{r load_libraries}
+
+devtools::load_all()
+
+library(tidyverse)
+
+library(forecast)
+
+library(lubridate)
+
+library(forcats)
+
+library(slider)
+
+library(tidymodels)
+
+
+```
+
+
+```{r setup}
+
+theme_set(theme_bw() +
+            theme(legend.position = "bottom",
+                  legend.title = element_blank()))
+
+```
+
+
+```{r import_data}
+
+data("sp_data")
+
+```
+
+
+```{r feature_engineering}
+
+sp_data = sp_data %>% 
+  mutate(sp_spread = (t12_eps_aggte / spx_index) * 100 - us_gov_yield_10_y) %>% 
+  mutate(sp_ret = c(NA, diff(log(spx_index)))) %>% 
+  mutate(sp_drawdown = calculate_drawdown(spx_index)) %>% 
+  mutate(is_correction = (sp_drawdown < -0.1))
+
+reg_df  = sp_data %>% 
+  select(date, sp_spread, is_correction) %>% 
+  group_by(year_month = as.yearmon(date)) %>% 
+  summarise(avg_spread = mean(sp_spread, na.rm = TRUE),
+            correction_ind = max(is_correction, na.rm = TRUE)) %>% 
+  select(-year_month) %>% 
+  filter(complete.cases(.)) %>% 
+  mutate(correction_ind = as_factor(correction_ind))
+
+```
+
+
+```{r log_reg}
+
+log_reg = logistic_reg() %>% 
+  set_engine("glm") %>% 
+  fit(formula("correction_ind ~ avg_spread"), data = reg_df)
+
+```
+
+
+
