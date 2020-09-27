@@ -105,9 +105,7 @@ sp_data %>%
             mapping = aes(xmin = start_date, xmax = end_date,
                           ymin = -Inf, ymax = Inf),
             inherit.aes = FALSE, fill = "red", alpha = 0.2) + 
-  xlab(NULL) + ylab(NULL) + ggtitle("S&P spread") + 
-  labs(tag = "Shaded areas are periods where S&P drawdown in -10%") + 
-  theme(plot.tag.position = c(0.2,0.1)) + 
+  xlab(NULL) + ylab(NULL) + ggtitle("S&P spread")
   
 
 
@@ -115,22 +113,26 @@ sp_data %>%
 ```
 
 
-
 ```{r plot_drawdown_vs_spread_monthly}
 
+lead_step = 4
 
 sp_data %>% 
   group_by(date = as.yearmon(date)) %>% 
   summarise(sp_spread = mean(sp_spread, na.rm = TRUE)) %>% 
-  ggplot(aes(x = date, y = sp_spread)) + 
+  ggplot(aes(x = date, y = lead(sp_spread,lead_step))) + 
   geom_line() + 
   geom_rect(data = event_df %>% 
               mutate(across(everything(), as.yearmon)),
             mapping = aes(xmin = start_date, xmax = end_date,
                           ymin = -Inf, ymax = Inf),
             inherit.aes = FALSE, fill = "red", alpha = 0.2) + 
-  xlab(NULL) + ylab(NULL) + ggtitle("S&P spread at monthly frequency")
-  
+  xlab(NULL) + ylab(NULL) + 
+  ggtitle(paste0("S&P spread (lead ",
+                 lead_step," months) at monthly frequency"))
+
+
+rm(lead_step)  
 
 
 
