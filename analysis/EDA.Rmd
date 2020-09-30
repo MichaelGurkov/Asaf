@@ -71,6 +71,23 @@ ggplot(aes(x = date, y = spx_index)) +
 The S&P index was trending upwards since the 90's, took a hit in 2000,
 rebounded and  took another hit in 2008. Since the GFC the index is going up.
 
+```{r}
+
+sp_data %>% 
+  mutate(dist_from_min = slide_dbl(.x = sp_spread,
+                                   .f = ~ log(.x[50] - min(.x, na.rm = TRUE) + 1),
+                                   .before = 49),
+         next_year_ret = lead(spx_index,365) / spx_index - 1) %>% 
+  ggplot(aes(x = dist_from_min, y = next_year_ret)) + 
+  geom_point() + 
+  geom_smooth()
+  xlab(NULL) + ylab(NULL) + 
+  ggtitle("Distance from local min vs Next year return")
+
+```
+
+
+
 Let's look at the drawdown of the index
 
 ```{r plot_drawdown}
